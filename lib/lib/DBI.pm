@@ -1,6 +1,6 @@
 package lib::DBI;
 
-use 5.006;
+use 5.010;
 use strict;
 use utf8;
 #~ use warnings FATAL => 'all';
@@ -31,108 +31,89 @@ my %CACHE= (# cache of loaded subs
 );
 
 my %Config = (## global default options
-    #~ $PKG =>{
   dbh => undef,
-  modules => { # 
-      select => <<END_SQL, # SQL or DBI statement for extract rows/blocks of module
-select m.id as module_id, m.name as module_name, m.alias as module_alias
+  cols_map => {
+    module_name =>"name",
+    module_id =>"id",
+    sub_name => "name",
+    sub_id => "id",
+    sub_code => "code",
+  },
+  prepare=>'cached',# 
+  compile => 1, # run time only for ->module(...)
+  type=> 'perl',
+  debug => $ENV{DEBUG_LIB_DBI} // 0,
+  cache=>\%CACHE, # ???
+  module_sql => <<END_SQL, # SQL or DBI statement for extract rows/blocks of module
+select ---m.id as module_id, m.name as module_name---, m.alias as module_alias
 s.*
 from modules m
 join refs r on m.id=r.id1
 join subs s on s.id=r.id2
 where ( m.name=? or m.id=? )
-and (m.disabled is null or m.disabled <> 1)
-and s.disabled <> 1
-and s.autoload <> 1
+and (not coalesce(m.disabled, false))
+and (not coalesce(s.disabled, false))
+and (not coalesce(s.autoload, false))
 order by s.order
 ;
 END_SQL
-    prepare=>'cached',# 
+    module_bind_order => [qw(module_name module_id )],
     #~ bind_arg_names => [qw(id alias name)], # bind VALUES to {modules}{select}, default [$module_id, $alias, $mod]
-    code_col => 'code',# name of column with source code of parts of module
+    #~ code_col => 'code',# name of column with source code of parts of module
     #~ module_name => undef, # apply row package <module name>; to top source
     #~ access => undef, # SQL or DBI statement for check access to loaded module
     #~ bind_access => [], # bind VALUES to {modules}{access}
-    join=>"\n", # rows concatenate
-    type=>"perl",
+    #~ join=>"\n", # rows concatenate
+    #~ type=>"perl",
     #~ import=>[],# Module->import()
-    require=>1, # compile time only -  eval require <module>
-    compile => 1, # run time only for ->module(...)
-    debug => 0,
-    cache=>\%CACHE, # ???
+    #~ require=>1, # compile time only -  eval require <module>
     #~ _rows => [],# store cache $dbh->selectall_arrayref (order!)
-  },
-  subs => {
-      select => <<END_SQL, # SQL or DBI statement for extract row of anonimous sub
-select m.id as module_id, m.name as module_name, m.alias as module_alias
+  sub_sql => <<END_SQL, # SQL or DBI statement for extract row of anonimous sub
+select ---m.id as module_id, m.name as module_name --, m.alias as module_alias
 s.*
 from modules m
   join refs r on m.id=r.id1
   join subs s on s.id=r.id2
 where (( m.name=? or m.id=? )
   and s.name=?) or s.id=?
-and m.disabled <> 1
-and s.disabled <> 1
+and (not coalesce(m.disabled, false))
+and (not coalesce(s.disabled, false))
 order by s.order
 ;
 END_SQL
-    #~ bind => [], # bind VALUES to {subs}{select}, default <module name> and <sub name>
-    code_col => 'code',# name of column with source code of parts of module
-    prepare=>'cached',
-    #~ sub_name =>undef, # name of loaded anonimous sub
-    #~ access => undef, # SQL or DBI statement for check access to loaded sub
-    #~ bind_access => [], # bind VALUES to {subs}{access}
-    compile => 1, #  eval and return code ref
-    cache => \%CACHE, # 0 - dont save in cache subs
-  },
-    #~ },
-    #~ 'Foo::Module::XYZ' => {# ключ соответствует с колонкой modules.name
-        #~ # ключи полностью идентичны keys {__PACKAGE__}{module}
-    #~ },
+  sub_bind_order => [qw(module_name module_id sub_name sub_id)],
 
 );
 
 BEGIN {
-    push @INC, sub {# диспетчер
-        my $self = shift;# эта функция CODE(0xf4d728) вроде не нужна
-        my $mod = shift;#Имя
-        my $content = module_content($mod, type=>'perl', prepare=>'cached', join=>"\n", cache=>1,)
-            or return undef;
-        open my $fh, '<', \$content or die "Cant open: $!";
-        return $fh;
-    };
+  push @INC, sub {# диспетчер
+    my $self = shift;# эта функция CODE(0xf4d728) вроде не нужна
+    my $mod = shift;#Имя
+    my $content = module_content($mod, %CONFIG, compile=>0, type => 'perl', debug => 1,)
+      or return undef;
+    open my $fh, '<', \$content or die "Cant open: $!";
+    return $fh;
+  };
 }
 
 sub module_content {# text module extract
   my $mod = shift; # Module<id> or alias or name
   my %arg = @_;
-  my $dbh = $arg{dbh} || $Config{dbh}
+  my $dbh = $arg{dbh}
     or return;
-  my $config = $Config{modules};
-  $arg{type} ||= $config->{type};
   
-  #~ $arg{alias} //= $mod;# as is
-  if ($arg{type} eq 'perl') {
+  if (!$arg{module_name} && $mod && $arg{type} eq 'perl') {
     $mod =~ s|/+|::|g;
     $mod =~ s|\.pm$||g;
   }
-  $arg{id} //= ($mod =~ /^Module_id_(\d+)$/i)[0]; # Module43252
+  $arg{module_name} ||= $mod || '';
+  #~ $arg{id} //= ($mod =~ /^Module_id_(\d+)$/i)[0]; # Module43252
+  $arg{module_id} //= 0;
   
-  #~ return
-    #~ unless $arg{name} || $arg{id};
+  croak "Module undefined"
+    unless $arg{module_name} || $arg{module_id};
   
-  #~ my $opt_m = $Config{$mod} ||= {};
-  #~ my $opt_g = $Config{$PKG}{modules};
-  #~ $arg{debug} //= $opt_m->{debug} // $opt_g->{debug};
-  
-  $arg{debug} //= $config->{debug};
-  #~ $arg{module_name} ||= $opt_m->{module_name};# || $mod;
-  #~ $arg{code_col} ||= $opt_m->{code_col} || $opt_g->{code_col};
-  $arg{code_col} ||= $config->{code_col};
-  $arg{join} //= $config->{join};
-  
-  $arg{cache} //= $config->{cache};
-  my $cache = $arg{cache}{'module name '.($mod || '')} || $arg{cache}{'module id '.($arg{id} || '')}
+  my $cache = $arg{cache}{"module name $arg{module_name}"} || $arg{cache}{"module id $arg{module_id}"}
     if $arg{cache};
   
   my $rows = $cache->{_rows}# строки модуля из кэша
@@ -140,54 +121,34 @@ sub module_content {# text module extract
   
   unless ($rows) {# не исп кэш или нет модуля в кэше
   
-    $arg{select} ||= $config->{select}
-      or return;
-    
-    $arg{prepare} //= $config->{prepare};
-    
     my $sth = $arg{prepare} eq 'cached'
-      ? $dbh->prepare_cached($arg{select})
-      : $dbh->prepare($arg{select});
+      ? $dbh->prepare_cached($arg{module_sql})
+      : $dbh->prepare($arg{module_sql})
+      if $arg{module_sql};
     
-    #~ $arg{bind_arg_names} ||= $config->{bind_arg_names};
-    
-    my @bind = @{$arg{bind}} || ($mod, $arg{id});# id, alias, name (transform name)
+    my @bind = @arg{ @{$arg{module_bind_order}} };
     $rows = $dbh->selectall_arrayref($sth, {Slice=>{},}, @bind);
-    #~ $arg{debug} && carp "Couldn't query content the module [$mod]"
-    return
+    $arg{debug} ? carp "Query content of the module [$arg{module_name}#$arg{module_id] returns empty recordset" : 1
+      and return
       unless @$rows;
     
-    
     if ($arg{cache}) {
-      $arg{cache}{'module name '.$mod}{_rows} = $rows
-        unless $arg{id};
-      $arg{cache}{'module id '.$arg{id}}{_rows} = $rows
-        if $arg{id};
+      $arg{cache}{"module name $arg{module_name}"}{_rows} = $rows
+        if $arg{module_name};
+      
+      $arg{cache}{"module id $arg{module_id}"}{_rows} = $rows
+        if $arg{module_id};
     }
   
   } 
   
-  return join $arg{join}, $arg{name} && $arg{type} eq 'perl' ? "package $arg{name};" : (), map {$_->{$arg{code_col}};} @$rows
+  return join $arg{join} // "\n\n", map {$_->{$arg{cols_map}{sub_code}};} @$rows;
   
 };
 
 
 sub new {
-#~ =pod
-    #~ ->new(dbh=>..., modules => {...}, subs => {...})
-#~ =cut
-  my $pkg = shift;
-  my %config = %Config;
-  my %arg = @_;
-  $config{$_}
-    ? ref $arg{$_} eq 'HASH'
-      ? @{$config{$_}}{ keys %{$arg{$_}} } = values %{$arg{$_}}
-      : $config{$_} = $arg{$_}
-    : undef
-    for qw(dbh modules subs);
-  my $self = bless { config => \%config, };# get a whole copy %Config
-  #~ $self->config(@_); # set 
-  return $self;
+  return bless { config => {%Config, @_}, };
 }
 
 
@@ -199,28 +160,22 @@ sub config {
 ! Проблема установки lib::DBI modules subs отдельных ключей
 Get and set config
 
-  lib::remote->config(); # get a whole package config
-  $obj->config(); # get a  whole object config
-  ...->config('dbh'); # get single config key
+  lib::remote->config(); # get a whole package config hashref
+  $obj->config(); # get a  whole object config hashref
+  ...->config('dbh'); # get config key
   ...->config('dbh'=>..., <...> => ...,) set config keys
 =cut
   my ($self, $pkg) = ref $_[0] ? (shift, undef) : (undef, shift);
-  #~ my $config = ref $pkg_or_obj ? $pkg_or_obj : \%Config;
   my $config = $self ? $self->{config} : \%Config;
 
   return $config
     unless @_;
   
-  return %{$config->{$_[0]}} if @_ == 1;#$config->{$_[0]};
-      #~ return $config->{__PACKAGE__}{$_[0]} if defined $config->{__PACKAGE__}{$_[0]};
-  #~ }
-  #~ return $config->{$_[0]}{$_[1]} if @_ == 2 && ! ref $_[1]; # 'lib::DBI'=>'dbh'
-  
+  return %{$config->{$_[0]}}
+    if @_ == 1;
+    
   my %arg = @_;
   @$config{ keys %arg } = values %arg;
-  #~ for my $mod (keys %arg) {
-      #~ @{$config->{$mod}}{keys %{$arg{$mod}}} = values %{$arg{$mod}};
-  #~ }
   return $self || $pkg;
 }
 
@@ -228,140 +183,121 @@ sub module {
 =pod
 опции не сохраняет
 =cut
-    #~ my $pkg_or_obj = shift;
-    my ($self, $pkg) = ref $_[0] ? (shift, undef) : (undef, shift);
-    my $mod = shift;
-      #~ my $config = ref $pkg_or_obj ? $pkg_or_obj : \%Config;
-    my $config = $self ? $self->{config}{modules} : $Config{modules};
-    my %arg = (%$config, @_);
-    
+  my ($self, $pkg) = ref $_[0] ? (shift, undef) : (undef, shift);
+  my $mod = shift;
+  my %arg = $self ? (%{$self->config()}, @_) : (%Config, @_);
   
-    #~ my $config_m = $config->{$mod};
-    #~ my $config_g = $config->{$PKG}{modules};
-    #~ $arg{debug} //= $config->{debug};
-    #~ $arg{compile} //= $config->{compile};
-    #~ $arg{name} = $mod;
-    
-    my $content = module_content($mod, %arg)
-        or ($arg{debug} ? carp "Нет содержимого модуля [$mod]" : 1)
-        and return undef;
-    
-    return $content
-      unless $arg{compile};
-    
-    #~ $arg{module_name} ||= $mod;
-    #~ if ($arg{compile}) {
-    eval $content;
-    if ($@) {
-        croak "($pkg|$self)->module: проблемы компиляции модуля [$mod]: $@";
-    } elsif ($arg{debug}) {
-        carp "($pkg|$self)->module: success compile [$mod]\n";
-    }
-    #~ if ($arg{import} && @{$arg{import}}) {
-        #~ eval { $arg{name}->import(@{$arg{import}}) };
-        #~ if ($@) {
-            #~ carp "$arg{module_name}->import: возможно проблемы с импортом: $@";
-        #~ } elsif ($arg{debug}) {
-            #~ carp "$arg{module_name}->import: success [@{$arg{import}}]\n";
-        #~ }
-    #~ }
-    return $arg{name} || $mod;
-    #~ } else {
-        #~ return $content;
-    #~ }
+  my $content = module_content($mod, %arg)
+      #~ or ($arg{debug} ? carp "Нет содержимого модуля [$mod]" : 1)
+    or return undef;
+  
+  return $content
+    unless $arg{compile};
+  
+  eval $content;
+  if ($@) {
+    croak "Fatal compile module [$mod]: $@";
+  } elsif ($arg{debug}) {
+    carp "Success compile module [$mod]\n";
+  }
+
+  return $mod;
 }
 
 sub sub {
-    my ($self, $pkg) = ref $_[0] ? (shift, undef) : (undef, shift);
-    my $mod_sub = shift;
-    my $config = $self ? $self->{config}{subs} : $Config{subs};
-    my %arg = (%$config, @_);
-    
-    my ($mod, $sub) = ref($mod_sub) eq 'ARRAY'
-      ? @$mod_sub
-      : do {
-        $mod_sub =~ s/(?:->|::)([\wа-я]+)$//i;
-        ($mod_sub || $arg{module}, $1);
-      };
-
-    #~ $sub = [split /->|::/, $sub] unless ref($sub);
-    #~ $sub->[1] ||= 'Начало';
-    #~ my $mod = join $sub->[0..($#$sub-1)];# alias
-    #~ $mod =~ s|/+|::|g;
-    #~ $mod =~ s|\.pm$||g;
-    $arg{module_id} //= ($mod =~ /^(\d+)$/i)[0]; # Module432524
-    $arg{sub_id} //= ($sub =~ /^(\d+)$/i)[0];
-    
-    $arg{code_col} ||= $Config{subs}{code_col}
-      or carp "[lib::DBI::subs] Нет code_col опции"
-      and return;
-    
-    my $cache = $arg{cache}{"module id $arg{module_id}->$sub"} || $arg{cache}{"$mod->$sub"} || $arg{cache}{"sub id $arg{sub_id}"}
-      if $arg{cache};
-    
-    $arg{compile} //= $Config{subs}{compile};
-    if ($cache) {
-      return $cache
-        unless $arg{compile};
-      #~ my $code_ref = $cache->{code_ref};
-      $cache->{code_col} ||= $arg{code_col}
-      return _eval $cache
-        unless $cache->{code_ref};
-      
-      return $cache->{code_ref};
+  my ($self, $pkg) = ref $_[0] ? (shift, undef) : (undef, shift);
+  my $mod_sub = shift; # Foo::bar  | Foo->bar
+  my %arg = $self ? (%{$self->config()}, @_) : (%Config, @_);
+  
+  my ($mod, $sub) = ref($mod_sub) eq 'ARRAY'
+    ? @$mod_sub
+    : do {
+      $mod_sub =~ s/(?:->|::)([\wа-я]+)$//i;
+      ($mod_sub, $1);
     }
-
-    # try to select and eval code
-    #~ my $opt_pkg = $Config{$PKG};
-    my $dbh = $arg{dbh} || $Config{dbh}
-      or carp "[lib::DBI::subs] Нет dbh соединения"
-      and return;
-    $arg{select} ||= $Config{subs}{select}
-      or carp "[lib::DBI::subs] Нет select опции"
-      and return;
-    my $sth = $arg{prepare} eq 'cached'
-      ? $dbh->prepare_cached($arg{select})
-      : $dbh->prepare($arg{select});
-    my @bind = @{$arg{bind}} || ($mod,  $arg{module_id}, $sub, $arg{sub_id});# id, alias, name (transform name)
-    my $r = $dbh->selectrow_hashref($sth, undef, @bind)
-      or return;
-    #~ warn "Couldn't query content the module [$mod]"
-        #~ and 
-    
-    if ($arg{cache}) {
-      $arg{cache}{"$mod->$sub"} = $r
-        unless $arg{module_id} && $arg{sub_id};
-        
-      $arg{cache}{"module id $arg{module_id}->$sub"} = $r
-        if $arg{module_id} && !$arg{sub_id};
-        
-      $arg{cache}{"sub id $arg{sub_id}"} = $r
-        if $arg{sub_id};
-      
-    }
-    
-    return $r
+    if $mod_sub;
+  
+  $arg{module_name} ||= $mod || '';
+  $arg{sub_name} ||= $sub || '';
+  $arg{module_id} //= ($mod =~ /^(\d+)$/i)[0] // 0; # Module432524
+  $arg{sub_id} //= ($sub =~ /^(\d+)$/i)[0] // 0;
+  
+  croak "Нет имени модуля"
+    unless $arg{module_name} || $arg{sub_id};
+  
+  croak "Нет имени subroutine"
+    unless $arg{sub_name} || $arg{sub_id};
+  
+  my $cache_sub = $arg{cache}{"sub $arg{module_id}->$arg{sub_name}"}
+    || $arg{cache}{"sub $arg{module_name}->$arg{sub_name}"}
+    || $arg{cache}{"sub $arg{sub_id}"}
+    if $arg{cache};
+  
+  if ($cache_sub) {
+    return $cache_sub
       unless $arg{compile};
+
+    return _eval_sub $cache_sub, \%arg
+      unless $cache_sub->{_coderef};
     
-    $r->{code_col} = $arg{code_col};
-    return _eval $r;
+    return $cache_sub->{_coderef};
+  }
+
+  # try to select and eval code
+  my $dbh = $arg{dbh}
+    or carp "Нет dbh соединения"
+    and return;
+  #~ $arg{select} ||= $Config{subs}{select}
+    #~ or carp "[lib::DBI::subs] Нет select опции"
+    #~ and return;
+  my $sth = $arg{prepare} eq 'cached'
+    ? $dbh->prepare_cached($arg{sub_sql})
+    : $dbh->prepare($arg{sub_sql})
+    if $arg{sub_sql};
+  
+  my @bind = @arg{ @{$arg{sub_bind_order}} };
+  my $r = $dbh->selectrow_hashref($sth, undef, @bind)
+    or $arg{debug} ? carp "Query content of the sub [$arg{module_name}::$arg->{sub_name}#$arg->{sub_id}] returns empty recordset" : 1
+    and return;
+  
+  $arg{sub_name} ||= $r->{$arg{cols_map}{sub_name}}
+    if $arg{cols_map}{sub_name};
+    
+  $arg{sub_id} ||= $r->{$arg{cols_map}{sub_id}}
+    if $arg{cols_map}{sub_id};
+  
+  if ($arg{cache}) {
+    $arg{cache}{"sub $arg{module_id}->$arg{sub_name}"} = $r;
+      if $arg{module_id} && $arg{sub_name};
+      
+    $arg{cache}{"sub $arg{module_name}->$arg{sub_name}"} = $r
+      if $arg{module_name} && $arg{sub_name};
+      
+    $arg{cache}{"sub $arg{sub_id}"} = $r
+      if $arg{sub_id};
+    
+  }
+  
+  return $r
+    unless $arg{compile};
+  
+  return _eval_sub $r, \%arg;
 }
 
 sub _eval_sub {
-    my $r = shift; # selected || cached row{} of sub
-    my $code = $r->{$r->{code_col}};
-    #~ $code =~ s|^\s*sub\s+{\s*|sub {\nmy \$self = \$r;\n|;
-    my $eval = eval $code;
-    if ($@) {
-        croak "[lib::DBI::subs] Проблемы компиляции программы [$r->{module_name}->$r->{name}]: $@";
-    } elsif ($r->{debug}) {
-        carp "[lib::DBI::subs] Success compile [$r->{module_name}->$r->{name}]\n";
-    }
-    #~ die "Проблемы с кодом [][]: $@" if $@;
-    if (ref($eval) eq 'CODE') {
-        $r->{code_ref} = $eval;
-    }
-    return $eval;
+  my ($r, $arg) = @_; # selected || cached row{} of sub
+  my $code = $r->{$arg->{cols_map}{sub_code}};
+  #~ $code =~ s|^\s*sub\s+{\s*|sub {\nmy \$self = \$r;\n|;
+  my $eval = eval $code;
+  if ($@) {
+      croak "Fatal compile sub $arg->{module_name}::$arg->{sub_name}#$arg->{sub_id}: $@";
+  } elsif ($arg->{debug}) {
+      carp "Success compile sub $arg->{module_name}::$arg->{sub_name}#$arg->{sub_id}";
+  }
+  if (ref($eval) eq 'CODE') {
+      $r->{_coderef} = $eval;
+  }
+  return $eval;
     
 }
 
