@@ -6,16 +6,24 @@ use Test::More;
 use DBI;
 use lib::DBI;
 
+my $config;
+BEGIN {
+  use FindBin qw($Bin);
+  $config = do "$Bin/config.pl";
+}
+
 plan skip_all => 'set env TEST_PG="DBI:Pg:dbname=<...>/<pg_user>/<passwd>" to enable this test' unless $ENV{TEST_PG};
 
-my @conn = split m|[/]|, $ENV{TEST_PG};
-$conn[3] = {pg_enable_utf8 => 1,};
+my ($dbh, $lib);
 
-my $dbh = DBI->connect(@conn);
+if ($config->{connect}) {
+  $dbh = DBI->connect(@{$config->{connect}});
 
-lib::DBI->config(dbh=>$dbh);
+  lib::DBI->config(dbh=>$dbh);
 
-my $lib = lib::DBI->new(dbh=>$dbh);
+  $lib = lib::DBI->new(dbh=>$dbh);
+
+}
 
 
 isa_ok(lib::DBI->config("dbh"), 'DBI::db');

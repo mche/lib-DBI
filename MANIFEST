@@ -8,4 +8,8 @@ t/manifest.t
 t/pod-coverage.t
 t/pod.t
 t/01-connect.t
-t/02-pragma.t
+t/02-default-schema.t
+t/03-custom-schema.t
+t/10-drop-schema.t
+t/default.sql
+t/custom.sql

@@ -33,7 +33,7 @@ where
   and (m.disabled is null or m.disabled = false)
   and (s.disabled is null or s.disabled = false)
   and (s.autoload is null or s.autoload = false)
-order by s.order
+order by s."order"
 END_SQL
   module_bind_order => [qw(module_name module_id )],
   sub_sql => <<END_SQL, # SQL or DBI statement for extract row of anonimous sub
@@ -45,7 +45,7 @@ where
   ((( m.name=? or m.id=? ) and s.name=?) or s.id=?)
   and (m.disabled is null or m.disabled = false)
   and (s.disabled is null or s.disabled = false)
-order by s.order
+order by s."order"
 END_SQL
   sub_bind_order => [qw(module_name module_id sub_name sub_id)],
 
@@ -53,6 +53,7 @@ END_SQL
 
 BEGIN {
   push @INC, sub {# диспетчер
+    return undef;
     my $self = shift;# эта функция CODE(0xf4d728) вроде не нужна
     my $mod = shift;#Имя
     $mod =~ s|/+|::|g;
@@ -97,7 +98,7 @@ sub module_content {# text module extract
     
     my @bind = @arg{ @{$arg{module_bind_order}} };
     $rows = $dbh->selectall_arrayref($sth, {Slice=>{},}, @bind);
-    $arg{debug} ? carp "Query content of the module [$arg{module_name}#$arg{module_id}] returns empty recordset" : 1
+    $arg{debug} ? carp "Query content of the module [$arg{module_name}#$arg{module_id}] returns empty recordset (not found)" : 1
       and return
       unless @$rows;
     
@@ -259,12 +260,18 @@ sub _eval_sub {
 
 sub import { # это разбор аргументов после строк use lib::DBI
     my $pkg = shift;# is eq __PACKAGE__
+    #~ warn "$pkg import";
     my $arg = ref $_[0] eq 'HASH' ? shift : {@_};
     $pkg->config(%$arg)
       if scalar keys %$arg;
     if (my $connect = $pkg->config('connect')) {
       require DBI;
       $pkg->config(dbh => DBI->connect(@$connect));
+    }
+    if (my $do = $pkg->config('do')) {
+      
+      $pkg->config('dbh')->do($_)
+        for ref $do eq 'ARRAY' ? @$do : ($do);
     }
 }
 
@@ -394,7 +401,7 @@ where
   and (m.disabled is null or m.disabled = false)
   and (s.disabled is null or s.disabled = false)
   and (s.autoload is null or s.autoload = false)
-order by s.order
+order by s."order"
 END_SQL
 
 =head2 module_bind_order
@@ -416,7 +423,7 @@ where
   ((( m.name=? or m.id=? ) and s.name=?) or s.id=?)
   and (m.disabled is null or m.disabled = false)
   and (s.disabled is null or s.disabled = false)
-order by s.order
+order by s."order"
 END_SQL
 
 =head2 sub_bind_order
@@ -479,11 +486,11 @@ Fetch subroutine content from DB tables and depends on L</"compile"> option comp
 
 One global sequence for autoincrement IDs of tables rows IDs of whole scheme/db.
 
-  CREATE SCHEMA IF NOT EXISTS "ID";
+  CREATE SEQUENCE IF NOT EXISTS "ID";
 
 =head2 Table "modules"
 
-  CREATE TABLE "modules" (
+  CREATE TABLE IF NOT EXISTS "modules" (
     id integer default nextval('"ID"'::regclass) not null primary key,
     ts timestamp without time zone not null default now(),
     name character varying not null unique,
@@ -493,14 +500,14 @@ One global sequence for autoincrement IDs of tables rows IDs of whole scheme/db.
 
 =head2 Table "subs"
 
-  CREATE TABLE "subs" (
+  CREATE TABLE IF NOT EXISTS "subs" (
     id integer default nextval('"ID"'::regclass) not null primary key,
     ts timestamp without time zone not null default now(),
     name character varying not null unique,
     code text,
     content_type text,
-    last_modified without time zone not null,
-    order numeric,
+    last_modified timestamp without time zone not null,
+    "order" numeric,
     disabled boolean,
     autoload boolean
   );
@@ -509,7 +516,7 @@ One global sequence for autoincrement IDs of tables rows IDs of whole scheme/db.
 
 References between rows of tables scheme.
 
-  CREATE TABLE "refs" (
+  CREATE TABLE IF NOT EXISTS "refs" (
     id integer default nextval('"ID"'::regclass) not null primary key,
     ts timestamp without time zone not null default now(),
     id1 int not null,
