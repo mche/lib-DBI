@@ -10,7 +10,7 @@ my %CACHE= ();# cache of loaded modules & subs
 
 my %CONFIG = (## global default options
   dbh => undef,
-  cols_map => {
+  cols_name => {
     module_name =>"name",
     module_id =>"id",
     sub_name => "name",
@@ -110,7 +110,7 @@ sub module_content {# text module extract
   
   } 
   
-  return join $arg{join} // "\n\n", map {$_->{$arg{cols_map}{sub_code}};} @$rows;
+  return join $arg{join} // "\n\n", map {$_->{$arg{cols_name}{sub_code}};} @$rows;
   
 };
 
@@ -214,11 +214,11 @@ sub sub {
     or $arg{debug} ? carp "Query content of the sub [$arg{module_name}::$arg{sub_name}#$arg{sub_id}] returns empty recordset" : 1
     and return;
   
-  $arg{sub_name} ||= $r->{$arg{cols_map}{sub_name}}
-    if $arg{cols_map}{sub_name};
+  $arg{sub_name} ||= $r->{$arg{cols_name}{sub_name}}
+    if $arg{cols_name}{sub_name};
     
-  $arg{sub_id} ||= $r->{$arg{cols_map}{sub_id}}
-    if $arg{cols_map}{sub_id};
+  $arg{sub_id} ||= $r->{$arg{cols_name}{sub_id}}
+    if $arg{cols_name}{sub_id};
   
   if ($arg{cache}) {
     $arg{cache}{"sub $arg{module_id}->$arg{sub_name}"} = $r
@@ -240,7 +240,7 @@ sub sub {
 
 sub _eval_sub {
   my ($r, $arg) = @_; # selected || cached row{} of sub
-  my $code = $r->{$arg->{cols_map}{sub_code}};
+  my $code = $r->{$arg->{cols_name}{sub_code}};
   #~ $code =~ s|^\s*sub\s+{\s*|sub {\nmy \$self = \$r;\n|;
   my $eval = eval $code;
   if ($@) {
@@ -354,11 +354,17 @@ Arrayref pass to L<DBI/"connect"> for L</dbh> option create. Usefull only for co
 
   connect => ['DBI:Pg:dbname=test', 'postgres', undef, {pg_enable_utf8 => 1,...}],
 
-=head2  cols_map
+=head2 do
+
+Arrayref values pass to L<DBI/"do"> during only for compile time case.
+
+  do => ['set search_path to 'foo schema'],
+
+=head2  cols_name
 
 Column names mapping to your db table modules. Defaults to:
 
-  cols_map => {
+  cols_name => {
     module_name =>"name",  # sql modules."name"
     module_id =>"id",      # sql modules."id"
     sub_name => "name",    # sql subs."name"
@@ -370,7 +376,7 @@ Column names mapping to your db table modules. Defaults to:
 
 Boolean runtime only option. Defaults to true.
 
-  compile => 1, # run time only for ->module(...)
+  compile => 1,
 
 =head2 debug
 
