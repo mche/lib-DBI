@@ -3,10 +3,7 @@ use Mojo::Base -strict;
 use strict;
 use utf8;
 use Test::More;
-
-#~ use DBI;
-
-#~ use Foo;
+use DBI;
 
 my $config;
 BEGIN {
@@ -15,7 +12,7 @@ BEGIN {
 }
 
 use lib::DBI $config->{connect} ? (
-  connect=> $config->{connect},
+  dbh=> DBI->connect(@{$config->{connect}}),
   do => [qq'CREATE SCHEMA IF NOT EXISTS "$config->{default}{schema}"', qq'set search_path to "$config->{default}{schema}"', $config->{default}{do}],
   ) : ()
 ;

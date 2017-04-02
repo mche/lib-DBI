@@ -262,10 +262,10 @@ sub import { # это разбор аргументов после строк us
     my $arg = ref $_[0] eq 'HASH' ? shift : {@_};
     $pkg->config(%$arg)
       if scalar keys %$arg;
-    if (my $connect = $pkg->config('connect')) {
-      require DBI;
-      $pkg->config(dbh => DBI->connect(@$connect));
-    }
+    #~ if (my $connect = $pkg->config('connect')) {
+      #~ require DBI;
+      #~ $pkg->config(dbh => DBI->connect(@$connect));
+    #~ }
     if (my $do = $pkg->config('do')) {
       
       $pkg->config('dbh')->do($_)
@@ -344,19 +344,15 @@ There are two modes of configure:
 
   $lib->config(...);
 
+=back
+
 =head2 dbh
 
   dbh => DBI->connect(...),
 
-=head2 connect
-
-Arrayref pass to L<DBI/"connect"> for L</dbh> option create. Usefull only for compile time case.
-
-  connect => ['DBI:Pg:dbname=test', 'postgres', undef, {pg_enable_utf8 => 1,...}],
-
 =head2 do
 
-Arrayref values pass to L<DBI/"do"> during only for compile time case.
+Arrayref values pass to L<DBI/"do"> during only compile time case.
 
   do => ['set search_path to 'foo schema'],
 

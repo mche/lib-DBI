@@ -3,7 +3,7 @@ use Mojo::Base -strict;
 use strict;
 use utf8;
 use Test::More;
-
+use DBI;
 
 my $config;
 BEGIN {
@@ -13,7 +13,7 @@ BEGIN {
 }
 
 use lib::DBI $config->{connect} ? (
-  connect=> $config->{connect},
+  dbh=> DBI->connect(@{$config->{connect}}),
   do => [qq'DROP SCHEMA IF EXISTS "$config->{default}{schema}" CASCADE', qq'DROP SCHEMA IF EXISTS "$config->{custom}{schema}" CASCADE',],
   ) : ()
 ;
