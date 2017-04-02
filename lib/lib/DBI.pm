@@ -6,31 +6,9 @@ use utf8;
 #~ use warnings FATAL => 'all';
 use Carp qw(croak carp);
 
-=encoding utf8
+my %CACHE= ();# cache of loaded modules & subs
 
-=head1 lib::DBI
-
-Доброго всем! Доброго здоровья! Доброго духа!
-
-¡ ¡ ¡ ALL GLORY TO GLORIA ! ! !
-
-
-=head1 VERSION
-
-Version 0.02
-
-=cut
-
-our $VERSION = '0.02';
-my $PKG = __PACKAGE__;
-
-my %CACHE= (# cache of loaded subs
-    '<mod | sub name|id>'=> {},# 435346/Начало
-        #code_eval
-        # колонки запроса
-);
-
-my %Config = (## global default options
+my %CONFIG = (## global default options
   dbh => undef,
   cols_map => {
     module_name =>"name",
@@ -39,47 +17,35 @@ my %Config = (## global default options
     sub_id => "id",
     sub_code => "code",
   },
-  prepare=>'cached',# 
+  #~ prepare=>'cached',# 
   compile => 1, # run time only for ->module(...)
-  type=> 'perl',
+  #~ type=> 'perl',
   debug => $ENV{DEBUG_LIB_DBI} // 0,
   cache=>\%CACHE, # ???
   module_sql => <<END_SQL, # SQL or DBI statement for extract rows/blocks of module
-select ---m.id as module_id, m.name as module_name---, m.alias as module_alias
-s.*
-from modules m
-join refs r on m.id=r.id1
-join subs s on s.id=r.id2
-where ( m.name=? or m.id=? )
-and (not coalesce(m.disabled, false))
-and (not coalesce(s.disabled, false))
-and (not coalesce(s.autoload, false))
+select s.*
+from 
+  modules m
+  join refs r on m.id=r.id1
+  join subs s on s.id=r.id2
+where
+  ( m.name=? or m.id=? )
+  and (m.disabled is null or m.disabled = false)
+  and (s.disabled is null or s.disabled = false)
+  and (s.autoload is null or s.autoload = false)
 order by s.order
-;
 END_SQL
-    module_bind_order => [qw(module_name module_id )],
-    #~ bind_arg_names => [qw(id alias name)], # bind VALUES to {modules}{select}, default [$module_id, $alias, $mod]
-    #~ code_col => 'code',# name of column with source code of parts of module
-    #~ module_name => undef, # apply row package <module name>; to top source
-    #~ access => undef, # SQL or DBI statement for check access to loaded module
-    #~ bind_access => [], # bind VALUES to {modules}{access}
-    #~ join=>"\n", # rows concatenate
-    #~ type=>"perl",
-    #~ import=>[],# Module->import()
-    #~ require=>1, # compile time only -  eval require <module>
-    #~ _rows => [],# store cache $dbh->selectall_arrayref (order!)
+  module_bind_order => [qw(module_name module_id )],
   sub_sql => <<END_SQL, # SQL or DBI statement for extract row of anonimous sub
-select ---m.id as module_id, m.name as module_name --, m.alias as module_alias
-s.*
+select s.*
 from modules m
   join refs r on m.id=r.id1
   join subs s on s.id=r.id2
-where (( m.name=? or m.id=? )
-  and s.name=?) or s.id=?
-and (not coalesce(m.disabled, false))
-and (not coalesce(s.disabled, false))
+where
+  ((( m.name=? or m.id=? ) and s.name=?) or s.id=?)
+  and (m.disabled is null or m.disabled = false)
+  and (s.disabled is null or s.disabled = false)
 order by s.order
-;
 END_SQL
   sub_bind_order => [qw(module_name module_id sub_name sub_id)],
 
@@ -89,7 +55,9 @@ BEGIN {
   push @INC, sub {# диспетчер
     my $self = shift;# эта функция CODE(0xf4d728) вроде не нужна
     my $mod = shift;#Имя
-    my $content = module_content($mod, %CONFIG, compile=>0, type => 'perl', debug => 1,)
+    $mod =~ s|/+|::|g;
+    $mod =~ s|\.pm$||g;
+    my $content = module_content($mod, %CONFIG, compile=>0, debug => 1,)
       or return undef;
     open my $fh, '<', \$content or die "Cant open: $!";
     return $fh;
@@ -102,10 +70,10 @@ sub module_content {# text module extract
   my $dbh = $arg{dbh}
     or return;
   
-  if (!$arg{module_name} && $mod && $arg{type} eq 'perl') {
-    $mod =~ s|/+|::|g;
-    $mod =~ s|\.pm$||g;
-  }
+  #~ if (!$arg{module_name} && $mod && $arg{type} eq 'perl') {
+    #~ $mod =~ s|/+|::|g;
+    #~ $mod =~ s|\.pm$||g;
+  #~ }
   $arg{module_name} ||= $mod || '';
   #~ $arg{id} //= ($mod =~ /^Module_id_(\d+)$/i)[0]; # Module43252
   $arg{module_id} //= 0;
@@ -121,9 +89,10 @@ sub module_content {# text module extract
   
   unless ($rows) {# не исп кэш или нет модуля в кэше
   
-    my $sth = $arg{prepare} eq 'cached'
-      ? $dbh->prepare_cached($arg{module_sql})
-      : $dbh->prepare($arg{module_sql})
+    my $sth = $dbh->prepare_cached($arg{module_sql})
+    #~ $arg{prepare} eq 'cached'  ?
+      #~ $dbh->prepare_cached($arg{module_sql})
+      #~ : $dbh->prepare($arg{module_sql})
       if $arg{module_sql};
     
     my @bind = @arg{ @{$arg{module_bind_order}} };
@@ -148,25 +117,13 @@ sub module_content {# text module extract
 
 
 sub new {
-  return bless { config => {%Config, @_}, };
+  return bless { config => {%CONFIG, @_}, };
 }
 
 
 sub config {
-=pod
-
-=head2  config
-
-! Проблема установки lib::DBI modules subs отдельных ключей
-Get and set config
-
-  lib::remote->config(); # get a whole package config hashref
-  $obj->config(); # get a  whole object config hashref
-  ...->config('dbh'); # get config key
-  ...->config('dbh'=>..., <...> => ...,) set config keys
-=cut
   my ($self, $pkg) = ref $_[0] ? (shift, undef) : (undef, shift);
-  my $config = $self ? $self->{config} : \%Config;
+  my $config = $self ? $self->{config} : \%CONFIG;
 
   return $config
     unless @_;
@@ -180,12 +137,9 @@ Get and set config
 }
 
 sub module {
-=pod
-опции не сохраняет
-=cut
   my ($self, $pkg) = ref $_[0] ? (shift, undef) : (undef, shift);
   my $mod = shift;
-  my %arg = $self ? (%{$self->config()}, @_) : (%Config, @_);
+  my %arg = $self ? (%{$self->config()}, @_) : (%CONFIG, @_);
   
   my $content = module_content($mod, %arg)
       #~ or ($arg{debug} ? carp "Нет содержимого модуля [$mod]" : 1)
@@ -207,7 +161,7 @@ sub module {
 sub sub {
   my ($self, $pkg) = ref $_[0] ? (shift, undef) : (undef, shift);
   my $mod_sub = shift; # Foo::bar  | Foo->bar
-  my %arg = $self ? (%{$self->config()}, @_) : (%Config, @_);
+  my %arg = $self ? (%{$self->config()}, @_) : (%CONFIG, @_);
   
   my ($mod, $sub) = ref($mod_sub) eq 'ARRAY'
     ? @$mod_sub
@@ -250,9 +204,10 @@ sub sub {
   #~ $arg{select} ||= $Config{subs}{select}
     #~ or carp "[lib::DBI::subs] Нет select опции"
     #~ and return;
-  my $sth = $arg{prepare} eq 'cached'
-    ? $dbh->prepare_cached($arg{sub_sql})
-    : $dbh->prepare($arg{sub_sql})
+  my $sth = $dbh->prepare_cached($arg{sub_sql})
+  #~ $arg{prepare} eq 'cached'
+    #~ ? $dbh->prepare_cached($arg{sub_sql})
+    #~ : $dbh->prepare($arg{sub_sql})
     if $arg{sub_sql};
   
   my @bind = @arg{ @{$arg{sub_bind_order}} };
@@ -302,6 +257,298 @@ sub _eval_sub {
 }
 
 
+sub import { # это разбор аргументов после строк use lib::DBI
+    my $pkg = shift;# is eq __PACKAGE__
+    my $arg = ref $_[0] eq 'HASH' ? shift : {@_};
+    $pkg->config(%$arg)
+      if scalar keys %$arg;
+    if (my $connect = $pkg->config('connect')) {
+      $pkg->config(dbh => DBI->connect(@$connect));
+    }
+}
+
+our $VERSION = '0.02';
+
+=encoding utf8
+
+Доброго всем! Доброго здоровья! Доброго духа!
+
+=head1 lib::DBI
+
+¡ ¡ ¡ ALL GLORY TO GLORIA ! ! !
+
+=head1 VERSION
+
+Version 0.02
+
+=head1 NAME
+
+Compile time and run time eval packeges and subs source texts from DBI handle by querying SQL.
+
+=head1 DESCRIPTION
+
+Pragma lib::DBI push @INC, sub {...} once and this dispatcher will extracts Perl modules from the DBI sources at the compile time.
+
+For run time there are class and object methods L</module> and L</sub> which also can compile sources of modules and subs.
+
+=head1 SYNOPSIS
+
+=head2 Compile time
+
+  # PostgreSQL DBD example
+  use lib::DBI connect => ['DBI:Pg:dbname=test', 'postgres', undef, {pg_enable_utf8 => 1,...}], ...;
+  use My::Foo::Module;
+    
+
+=head2 Run time
+
+  use DBI;
+  use lib::DBI;
+  my $dbh = DBI->connect(...);
+  lib::DBI->config(dbh=>$dbh, ...);
+  lib::DBI->module('Foo::Bar', compile=>1,);
+  my $foo = Foo::Bar->new();
+  my $mod_content = lib::DBI->module('Foo::Bar', compile=>0,);
+  
+  # or object
+  my $lib = lib::DBI->new(dbh=>$dbh, ...);
+  $lib->module('Foo::Bar', compile=>1,);
+  my $foo = Foo::Bar->new();
+  my $mod_content = $lib->module('Foo::Bar', compile=>0,);
+  
+  # sub
+  my $evalres = lib::DBI->sub('Foo->bar', compile=>1,);
+  my $subrow = lib::DBI->sub('Foo->bar', compile=>0,);
+  
+  # or object
+  my $evalres = $lib->sub('Foo->bar', compile=>1,);
+  my $subrow = $lib->sub('Foo->bar', compile=>0,);
+
+=head1 CONFIG OPTIONS
+
+There are two modes of configure:
+
+=over 4
+
+=item * Package/class level.
+
+  lib::DBI->config(...);
+
+=item * Instance/object level.
+
+  $lib->config(...);
+
+=head2 dbh
+
+  dbh => DBI->connect(...),
+
+=head2 connect
+
+Arrayref pass to L<DBI/"connect"> for L</dbh> option create. Usefull only for compile time case.
+
+  connect => ['DBI:Pg:dbname=test', 'postgres', undef, {pg_enable_utf8 => 1,...}],
+
+=head2  cols_map
+
+Column names mapping to your db table modules. Defaults to:
+
+  cols_map => {
+    module_name =>"name",  # sql modules."name"
+    module_id =>"id",      # sql modules."id"
+    sub_name => "name",    # sql subs."name"
+    sub_id => "id",        # sql subs."id"
+    sub_code => "code",    # sql subs."code"
+  },
+
+=head2 compile
+
+Boolean runtime only option. Defaults to true.
+
+  compile => 1, # run time only for ->module(...)
+
+=head2 debug
+
+Boolean option. Default to C<$ENV{DEBUG_LIB_DBI} // 0>
+
+  debug => 1,
+
+=head2 cache
+
+False value for disable cached data or hashref where is DB data will stored. Defaults to internal hashref and cache is enabled.
+
+  cache=>0,
+
+=head2 module_sql
+
+String of SQL query for fetch module content from DB tables. Defaults as examle to:
+
+  module_sql => <<END_SQL,
+select s.*
+from 
+  modules m
+  join refs r on m.id=r.id1
+  join subs s on s.id=r.id2
+where
+  ( m.name=? or m.id=? )
+  and (m.disabled is null or m.disabled = false)
+  and (s.disabled is null or s.disabled = false)
+  and (s.autoload is null or s.autoload = false)
+order by s.order
+END_SQL
+
+=head2 module_bind_order
+
+Arrayref of modules and subroutines tables column names which in where clause of L</"module_sql">. Lenght and order of array must соотв placeholhers inside where clause of  L</"module_sql">. Defaults as for example for L</"module_sql"> statement to:
+
+  module_bind_order => [qw(module_name module_id )],
+
+=head2 sub_sql
+
+String of SQL query for fetch subroutine content from DB tables. Defaults as examle to:
+
+  sub_sql => <<END_SQL,
+select s.*
+from modules m
+  join refs r on m.id=r.id1
+  join subs s on s.id=r.id2
+where
+  ((( m.name=? or m.id=? ) and s.name=?) or s.id=?)
+  and (m.disabled is null or m.disabled = false)
+  and (s.disabled is null or s.disabled = false)
+order by s.order
+END_SQL
+
+=head2 sub_bind_order
+
+Arrayref of modules and subroutines tables column names which in where clause of L</"sub_sql">. Lenght and order of array must соотв placeholhers inside where clause of  L</"sub_sql">. Defaults as for example for L</"sub_sql"> statement to:
+
+  sub_bind_order => [qw(module_name module_id sub_name sub_id)],
+
+
+=head1 SUBROUTINES/METHODS
+
+=head2 new
+
+    my $lib = lib::DBI->new(<pair opts>)
+
+Create object-dispatcher with own config. See L</"CONFIG OPTIONS">.
+
+=head2  config
+
+Get or set config options for package and instances. See L</"CONFIG OPTIONS">.
+
+  # get a whole package/class config hashref
+  lib::remote->config();
+  
+  # get a whole object config hashref
+  $lib->config();
+  
+  # get package/class config key
+  lib::DBI->config('dbh');
+  
+  # get object config key
+  $lib->config('dbh');
+  
+  # set package/class config keys
+  lib::DBI->config('dbh'=>..., <...> => ...,);
+  
+  # set object config keys
+  $lib->config('dbh'=>..., <...> => ...,);
+
+=head2 module
+
+Fetch module content from DB tables and depends on L</"compile"> option compile content. If compile module content then returns module name else returns joined module content text. See L</"CONFIG OPTIONS">.
+
+  lib::DBI->module(...)
+  # or object
+  $lib->module(...)
+
+=head2 sub
+
+Fetch subroutine content from DB tables and depends on L</"compile"> option compile content. If compile subroutine content then returns result of evaluted subroutine content else returns db hashref record. See L</"CONFIG OPTIONS">.
+
+  lib::DBI->sub(...)
+  # or object
+  $lib->sub(...)
+
+
+=head1 Example PostgreSQL scheme
+
+=head2 One global sequence
+
+One global sequence for autoincrement IDs of tables rows IDs of whole scheme/db.
+
+  CREATE SCHEMA IF NOT EXISTS "ID";
+
+=head2 Table "modules"
+
+  CREATE TABLE "modules" (
+    id integer default nextval('"ID"'::regclass) not null primary key,
+    ts timestamp without time zone not null default now(),
+    name character varying not null unique,
+    descr text,
+    disabled boolean
+  );
+
+=head2 Table "subs"
+
+  CREATE TABLE "subs" (
+    id integer default nextval('"ID"'::regclass) not null primary key,
+    ts timestamp without time zone not null default now(),
+    name character varying not null unique,
+    code text,
+    content_type text,
+    last_modified without time zone not null,
+    order numeric,
+    disabled boolean,
+    autoload boolean
+  );
+
+=head2 Table "refs"
+
+References between rows of tables scheme.
+
+  CREATE TABLE "refs" (
+    id integer default nextval('"ID"'::regclass) not null primary key,
+    ts timestamp without time zone not null default now(),
+    id1 int not null,
+    id2 int not null,
+    unique(id1, id2) -- also CREATE INDEX on "refs" (id2);
+  );
+
+
+=head1 AUTHOR
+
+Mikhail Che, C<< <m.che at cpan.org> >>
+
+=head1 BUGS / CONTRIBUTING
+
+Please report any bugs or feature requests at L<https://github.com/mche/lib-DBI/issues>.
+
+=head1 COPYRIGHT
+
+Copyright 2016-2017 Mikhail Che.
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
+
+
+=head1 DISTRIB
+
+$ module-starter --module=lib::DBI --author=”Mikhail Che” --email=”mche[-at-]cpan.org” --builder=Module::Build --license=perl --verbose
+
+$ perl Build.PL
+
+$ ./Build test
+
+$ ./Build dist
+
+=cut
+
+# End of lib::DBI
+
+__END__
+
 sub import { # это разбор аргументов после строк use lib::...
     my $pkg = shift;# is eq __PACKAGE__
     unshift @_, $PKG if ref $_[0] eq 'HASH';
@@ -334,255 +581,3 @@ sub import { # это разбор аргументов после строк us
         }
     }
 }
-
-
-=head1 NAME
-
-Compile time and run time eval packeges and subs source texts from DBI handle by querying SQL.
-
-=head1 DESCRIPTION
-
-Pragma lib::DBI push @INC, sub {...} once and this dispatcher will extracts Perl modules from the DBI sources at the compile time.
-For run time there are class and object methods: ->module() and ->sub() which also compile sources of modules and subs.
-For configure ->config() method.
-
-Extracted source parts of modules and subs go to eval call or might be return raw text without eval.
-
-For modules multirows parts will join on column code in order name column.
-
-The name column of subs is like ailas for query but for AUTOLOAD they must have name like the sub on the code text.
-
-
-=head1 SYNOPSIS
-
-=head2 Compile time
-
-    # global config 
-    use lib::DBI {<global pair opts>}; # !!! first hash ref !!!
-    use My::Foo::Module; # simple bind name 'My::Foo::Module' to SQL-query ({modules}{select} in global config of lib::DBI)
-    my $foo = My::Foo::Module->new(...);
-    ...
-    # auto require module
-    use lib::DBI 'My::Foo::Module';
-    my $foo = My::Foo::Module->new(...);
-    ...
-    # configure and load some module with personal options
-    use lib::DBI 'My::Bar::Module' => {<module pair opts>}; #
-    
-    # one line global config and load the module and his opts
-    use lib::DBI {<global pair opts>}, 'My::Bar::Module' => {<module pair opts>};# !!! First hash ref is a global config !!!
-
-=head2 Run time
-
-=head3 Functional style
-
-    # modules
-    lib::DBI->module('My::Baz::Module',); # same as use My::Baz::Module;
-    My::Baz::Module->...;
-    # extract content, not compile
-    my $content = lib::DBI->module('My::Biz::Module', compile=>0, ...); #<pair opts>
-    # execute one line
-    lib::DBI->module('My::Baz::Module', ...)->new(...)->foo(...);# default compile=>1
-    # dispatcher
-    my $disp = lib::DBI->new(...);
-    $disp->module(...)# same as lib::DBI->module but
-    
-    
-    # subs
-    lib::DBI->sub('Foo::Bar->baz',...); # auto delimeter '->' for <module name> <sub name>
-    lib::DBI->sub('Foo::Bar::baz',...); # auto delimeter '::' for <module name> <sub name>
-    lib::DBI->sub([qw(Foo::Bar baz)],...); # array ref 2 elem [<module name>, <sub name>]
-    my $res = Foo::Bar->baz(<args>);
-    my $res = Foo::Bar::baz(<args>);
-    # one line load and eval call with <args> and return results
-    my $res = lib::DBI->sub('Foo::Bar->baz', call=>[<args>], ...);
-    my $res = lib::DBI->sub('Foo::Bar::baz', call=>[<args>], ...);
-    my $res = lib::DBI->sub(['Foo::Bar', 'baz'], delim=>'->', call=>[<args>], ...); # eval as Foo::Bar->baz(<args>) and return results
-    my $res = lib::DBI->sub(['Foo::Bar', 'baz'], delim=>'::', call=>[<args>], ...); # eval as Foo::Bar::baz(<args>) and return results
-    
-    # anon
-    my $res = lib::DBI->sub(['Foo::Bar', 'baz'], anon=>1, ...)->(<args>);
-    my $res = lib::DBI->sub(['Foo::Bar', 'baz'], anon=>1, call=>[<args>],...);
-    
-    # extract text, not compile
-    my $text = lib::DBI->sub(['Foo::Bar', 'baz'], compile=>0, ...); # joined \n if many records in order by
-
-=head3 Object style - object dispatcher
-
-    my $disp = lib::DBI->new(<pair opts>);
-    $disp->module(...);
-    $disp->sub(...);
-
-
-=head1 SUBROUTINES/METHODS
-
-=head2 new
-
-    my $disp = lib::DBI->new(<pair opts>)
-
-Create object-dispatcher with own config
-
-=head2 module
-
-    lib::DBI->module(...)
-    $disp->module(...)
-
-Compile the module. Return module name or module join text on success. Die on compile errors.
-
-=head2 sub
-
-    lib::DBI->sub(...)
-    $disp->sub(...)
-
-Create/redefine sub of module or an anonimous sub. Compile and may be call it.
-
-Return depend on opts:
-No set <call> and <anon> opts - full sub name on success eval source code or die on failure compile.
-Set <call> and no set <anon> - results of calling this sub with the args or die on failure compile source code. <delim> opt also may be.
-No set <call> and set <anon> - return anonimous subroutine or die on failure compile source code.
-Set  <call> and <anon> opts - results of calling anonimous subroutine or die on failure compile source code and run code.
-
-
-
-=head1 Config and options
-
-Два режима конфигурирования lib::DBI:
-
-=over 4
-
-=item * Глобальный конфиг модуля, общие настройки для всех вызовов (прагма и функциональные вызовы)
-
-=item * Создание отдельного объекта-диспетчера ->new() со свои конфигом
-
-Прагма и ->config() сохраняют опции конфигурирования. При вызовах ->module() и ->sub() опции не сохраняются.
-
-=head2 Dbh option
-
-    dbh => DBI->connect(...),
-
-=head2  Modules options
-
-    select => # SQL or prepared DBI statement for select rows of module
-    bind_select => [], #bind values for statement
-    code_col => 'code', # name of code column on fetch select rows
-
-=head2 Subs options
-
-=head2 Default SQL structure as example
-
-=head3 One global sequence
-
-One global sequence for autoincrement IDs of tables rows of whole schema/db.
-
-=head2 Table "modules" - 
-
-Create table modules (
-    id
-    ts
-    name (unique)
-    alias (unique)
-    descr
-    disabled
-);
-
-=head3 Table "subs" - 
-
-Create table subs (
-    id
-    ts
-    name
-    code
-    content_type
-    last_modified
-    version
-    order
-    disabled
-    autoload
-);
-
-=head3 Table "refs" - references between rows of tables schema
-
-Create table refs (
-    id
-    ts
-    id1
-    id2
-);
-
-Create index unique (id1, id2);
-
-=head1 AUTHOR
-
-Mikhail Che, C<< <m.che at cpan.org> >>
-
-=head1 BUGS / CONTRIBUTING
-
-Please report any bugs or feature requests at L<https://github.com/mche/lib-DBI/issues>.
-
-=head1 COPYRIGHT
-
-Copyright 2016 Mikhail Che.
-
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself.
-
-
-
-
-
-=head1 SUPPORT
-
-You can find documentation for this module with the perldoc command.
-
-    perldoc lib::DBI
-
-
-You can also look for information at:
-
-=over 4
-
-=item * RT: CPAN's request tracker (report bugs here)
-
-L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=lib-DBI>
-
-=item * AnnoCPAN: Annotated CPAN documentation
-
-L<http://annocpan.org/dist/lib-DBI>
-
-=item * CPAN Ratings
-
-L<http://cpanratings.perl.org/d/lib-DBI>
-
-=item * Search CPAN
-
-L<http://search.cpan.org/dist/lib-DBI/>
-
-=back
-
-
-=head1 ACKNOWLEDGEMENTS
-
-
-=head1 LICENSE AND COPYRIGHT
-
-Copyright 2013 Mikhail Che.
-
-This program is free software; you can redistribute it and/or modify it
-under the terms of either: the GNU General Public License as published
-by the Free Software Foundation; or the Artistic License.
-
-See L<http://dev.perl.org/licenses/> for more information.
-
-=head1 DISTRIB
-
-$ module-starter --module=lib::DBI --author=”Mikhail Che” --email=”m.che@cpan.org” --builder=Module::Build --license=perl --verbose
-
-$ perl Build.PL
-
-$ ./Build test
-
-$ ./Build dist
-
-=cut
-
-1; # End of lib::DBI
