@@ -26,8 +26,7 @@ my %CONFIG = (## global default options
 select s.*
 from 
   modules m
-  join refs r on m.id=r.id1
-  join subs s on s.id=r.id2
+  join subs s on s.module_id=m.id
 where
   ( m.name=? or m.id=? )
   and (m.disabled is null or m.disabled = false)
@@ -39,8 +38,7 @@ END_SQL
   sub_sql => <<END_SQL, # SQL or DBI statement for extract row of anonimous sub
 select s.*
 from modules m
-  join refs r on m.id=r.id1
-  join subs s on s.id=r.id2
+  join subs s on s.module_id=m.id
 where
   ((( m.name=? or m.id=? ) and s.name=?) or s.id=?)
   and (m.disabled is null or m.disabled = false)
@@ -394,8 +392,7 @@ String of SQL query for fetch module content from DB tables. Defaults as examle 
 select s.*
 from 
   modules m
-  join refs r on m.id=r.id1
-  join subs s on s.id=r.id2
+  join subs s on s.module_id=m.id
 where
   ( m.name=? or m.id=? )
   and (m.disabled is null or m.disabled = false)
@@ -417,8 +414,7 @@ String of SQL query for fetch subroutine content from DB tables. Defaults as exa
   sub_sql => <<END_SQL,
 select s.*
 from modules m
-  join refs r on m.id=r.id1
-  join subs s on s.id=r.id2
+  join subs s on s.module_id=m.id
 where
   ((( m.name=? or m.id=? ) and s.name=?) or s.id=?)
   and (m.disabled is null or m.disabled = false)
@@ -503,6 +499,7 @@ One global sequence for autoincrement IDs of tables rows IDs of whole scheme/db.
   CREATE TABLE IF NOT EXISTS "subs" (
     id integer default nextval('"ID"'::regclass) not null primary key,
     ts timestamp without time zone not null default now(),
+    module_id int not null REFERENCES "modules"(id),
     name character varying not null unique,
     code text,
     content_type text,
@@ -512,17 +509,6 @@ One global sequence for autoincrement IDs of tables rows IDs of whole scheme/db.
     autoload boolean
   );
 
-=head2 Table "refs"
-
-References between rows of tables scheme.
-
-  CREATE TABLE IF NOT EXISTS "refs" (
-    id integer default nextval('"ID"'::regclass) not null primary key,
-    ts timestamp without time zone not null default now(),
-    id1 int not null,
-    id2 int not null,
-    unique(id1, id2) -- also CREATE INDEX on "refs" (id2);
-  );
 
 
 =head1 AUTHOR
