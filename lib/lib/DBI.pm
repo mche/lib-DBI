@@ -128,7 +128,7 @@ sub config {
   return $config
     unless @_;
   
-  return %{$config->{$_[0]}}
+  return $config->{shift()}
     if @_ == 1;
     
   my %arg = @_;
@@ -263,6 +263,7 @@ sub import { # это разбор аргументов после строк us
     $pkg->config(%$arg)
       if scalar keys %$arg;
     if (my $connect = $pkg->config('connect')) {
+      require DBI;
       $pkg->config(dbh => DBI->connect(@$connect));
     }
 }
@@ -283,7 +284,7 @@ Version 0.02
 
 =head1 NAME
 
-Compile time and run time eval packeges and subs source texts from DBI handle by querying SQL.
+lib::DBI - Compile time and run time packages/modules and subs source code texts from DBI handle by querying SQL.
 
 =head1 DESCRIPTION
 
