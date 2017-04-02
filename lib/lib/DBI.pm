@@ -97,7 +97,7 @@ sub module_content {# text module extract
     
     my @bind = @arg{ @{$arg{module_bind_order}} };
     $rows = $dbh->selectall_arrayref($sth, {Slice=>{},}, @bind);
-    $arg{debug} ? carp "Query content of the module [$arg{module_name}#$arg{module_id] returns empty recordset" : 1
+    $arg{debug} ? carp "Query content of the module [$arg{module_name}#$arg{module_id}] returns empty recordset" : 1
       and return
       unless @$rows;
     
@@ -212,7 +212,7 @@ sub sub {
   
   my @bind = @arg{ @{$arg{sub_bind_order}} };
   my $r = $dbh->selectrow_hashref($sth, undef, @bind)
-    or $arg{debug} ? carp "Query content of the sub [$arg{module_name}::$arg->{sub_name}#$arg->{sub_id}] returns empty recordset" : 1
+    or $arg{debug} ? carp "Query content of the sub [$arg{module_name}::$arg{sub_name}#$arg{sub_id}] returns empty recordset" : 1
     and return;
   
   $arg{sub_name} ||= $r->{$arg{cols_map}{sub_name}}
@@ -222,7 +222,7 @@ sub sub {
     if $arg{cols_map}{sub_id};
   
   if ($arg{cache}) {
-    $arg{cache}{"sub $arg{module_id}->$arg{sub_name}"} = $r;
+    $arg{cache}{"sub $arg{module_id}->$arg{sub_name}"} = $r
       if $arg{module_id} && $arg{sub_name};
       
     $arg{cache}{"sub $arg{module_name}->$arg{sub_name}"} = $r
