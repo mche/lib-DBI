@@ -18,7 +18,10 @@ use lib::DBI $config->{connect} ? (
   ) : ()
 ;
 
-plan skip_all => 'set env TEST_PG="DBI:Pg:dbname=<...>/<pg_user>/<passwd>" to enable this test' unless $ENV{TEST_PG};
+plan skip_all => 'set env TEST_PG="DBI:Pg:dbname=<...>/<pg_user>/<passwd>" to enable this test'
+  and done_testing()
+  and exit
+  unless $ENV{TEST_PG};
 
 my $dbh = lib::DBI->config("dbh");
 

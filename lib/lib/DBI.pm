@@ -51,13 +51,21 @@ END_SQL
 
 BEGIN {
   push @INC, sub {# диспетчер
-    return undef;
     my $self = shift;# эта функция CODE(0xf4d728) вроде не нужна
     my $mod = shift;#Имя
     $mod =~ s|/+|::|g;
     $mod =~ s|\.pm$||g;
-    my $content = module_content($mod, %CONFIG, compile=>0, debug => 1,)
-      or return undef;
+    #~ warn "INC module [$mod]";
+    my @param = ($mod, %CONFIG, cache000=> 1, compile=>0, append=>"1;", debug => 1,);
+    my $content = module_content(@param);
+    
+      #~ or warn "INC no content [$mod]"
+      #~ module_content(@param)
+    return 
+      unless $content;
+    
+    module_content(@param);
+    
     open my $fh, '<', \$content or die "Cant open: $!";
     return $fh;
   };
@@ -67,23 +75,27 @@ sub module_content {# text module extract
   my $mod = shift; # Module<id> or alias or name
   my %arg = @_;
   my $dbh = $arg{dbh}
-    or return;
+    or warn "No dbh"
+    and return;
   
   #~ if (!$arg{module_name} && $mod && $arg{type} eq 'perl') {
     #~ $mod =~ s|/+|::|g;
     #~ $mod =~ s|\.pm$||g;
   #~ }
-  $arg{module_name} ||= $mod || '';
+  $arg{module_name} = $mod || '';
   #~ $arg{id} //= ($mod =~ /^Module_id_(\d+)$/i)[0]; # Module43252
   $arg{module_id} //= 0;
   
   croak "Module undefined"
     unless $arg{module_name} || $arg{module_id};
   
-  my $cache = $arg{cache}{"module name $arg{module_name}"} || $arg{cache}{"module id $arg{module_id}"}
+  my $cache = ($arg{module_name} && $arg{cache}{"module name $arg{module_name}"})
+    || ($arg{module_id} && $arg{cache}{"module id $arg{module_id}"})
+    
     if $arg{cache};
   
   my $rows = $cache->{_rows}# строки модуля из кэша
+    and $arg{debug} && warn "Found [$arg{module_name}] in cache"
     if  $cache;
   
   unless ($rows) {# не исп кэш или нет модуля в кэше
@@ -95,12 +107,17 @@ sub module_content {# text module extract
       if $arg{module_sql};
     
     my @bind = @arg{ @{$arg{module_bind_order}} };
+    #~ use Data::Dumper;
+  #~ warn "Bind $mod: ", @bind;#\%arg;
     $rows = $dbh->selectall_arrayref($sth, {Slice=>{},}, @bind);
-    $arg{debug} ? carp "Query content of the module [$arg{module_name}#$arg{module_id}] returns empty recordset (not found)" : 1
+    $arg{debug} ? warn "Query content of the module [$arg{module_name}#$arg{module_id}] returns empty recordset (not found)" : 1
       and return
       unless @$rows;
     
     if ($arg{cache}) {
+      
+      $arg{debug} && carp "Module [$arg{module_name}] save to cache";
+      
       $arg{cache}{"module name $arg{module_name}"}{_rows} = $rows
         if $arg{module_name};
       
@@ -110,7 +127,7 @@ sub module_content {# text module extract
   
   } 
   
-  return join $arg{join} // "\n\n", map {$_->{$arg{cols_name}{sub_code}};} @$rows;
+  return join $arg{join} // "\n\n", (map {$_->{$arg{cols_name}{sub_code}};} @$rows), ($arg{append} ? $arg{append} : ());
   
 };
 
@@ -140,9 +157,13 @@ sub module {
   my $mod = shift;
   my %arg = $self ? (%{$self->config()}, @_) : (%CONFIG, @_);
   
-  my $content = module_content($mod, %arg)
+  my $content = module_content($mod, %arg);
+  #~ module_content($mod, %arg);
       #~ or ($arg{debug} ? carp "Нет содержимого модуля [$mod]" : 1)
-    or return undef;
+  return
+    unless $content;
+  
+  
   
   return $content
     unless $arg{compile};
@@ -153,7 +174,7 @@ sub module {
   } elsif ($arg{debug}) {
     carp "Success compile module [$mod]\n";
   }
-
+  
   return $mod;
 }
 
@@ -181,9 +202,9 @@ sub sub {
   croak "Нет имени subroutine"
     unless $arg{sub_name} || $arg{sub_id};
   
-  my $cache_sub = $arg{cache}{"sub $arg{module_id}->$arg{sub_name}"}
-    || $arg{cache}{"sub $arg{module_name}->$arg{sub_name}"}
-    || $arg{cache}{"sub $arg{sub_id}"}
+  my $cache_sub = ( $arg{module_id} && $arg{sub_name} && $arg{cache}{"sub $arg{module_id}->$arg{sub_name}"})
+    || ( $arg{module_name} && $arg{sub_name} &&  $arg{cache}{"sub $arg{module_name}->$arg{sub_name}"})
+    || ( $arg{sub_id} && $arg{cache}{"sub $arg{sub_id}"})
     if $arg{cache};
   
   if ($cache_sub) {
@@ -382,9 +403,9 @@ Boolean option. Default to C<$ENV{DEBUG_LIB_DBI} // 0>
 
 =head2 cache
 
-False value for disable cached data or hashref where is DB data will stored. Defaults to internal hashref and cache is enabled.
+False value for disable cached data or hashref where is DB data will stored. Defaults to internal hashref and cache will enabled.
 
-  cache=>0,
+  cache => 0,
 
 =head2 module_sql
 
